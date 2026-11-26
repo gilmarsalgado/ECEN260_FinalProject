@@ -23,6 +23,7 @@
 /* USER CODE BEGIN Includes */
 
 #include <stdio.h>
+#include "font.h"
 
 /* USER CODE END Includes */
 
@@ -39,17 +40,44 @@
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
 
-#define I2C_ADDR 0x27
 
-#define LCD_RS_BIT 0
-#define LCD_EN_BIT 2
-#define LCD_BL_BIT 3
-#define LCD_D4_BIT 4
+// Display dimensions
+#define NUMROWS 160
+#define NUMCOLS 128
+// Common 16-bit RGB colors: bbbbb gggggg rrrrr
+#define BLACK 0x0000 // 00000 000000 00000
+#define WHITE 0xFFFF // 11111 111111 11111 (red + green + blue)
+#define RED 0x001F // 00000 000000 11111
+#define GREEN 0x07E0 // 00000 111111 00000
+#define BLUE 0xF800 // 11111 000000 00000
+#define CYAN 0xFFE0 // 11111 111111 00000 (green + blue)
+#define MAGENTA 0xF81F // 11111 000000 11111 (red + blue)
+#define YELLOW 0x07FF // 00000 111111 11111 (red + green)
+#define ORANGE 0x041F // 00000 100000 11111 (red + 50% green)
+#define PURPLE 0x8010 // 10000 000000 10000 (50% red + 50% blue)
+#define GRAY 0x8410 // 10000 100000 10000 (50% red + 50% green + 50% blue)
+#define LIGHTGRAY 0xC618 // 11000 110000 11000 (75% red + 75% green + 75% blue)
+#define DARKGRAY 0x4208 // 01000 010000 01000 (25% red + 25% green + 25% blue)
+
+// ST7735 command codes
+#define SWRESET 0x01
+#define SLPOUT 0x11
+#define COLMOD 0x3A
+#define MADCTL 0x36
+#define DISPON 0x29
+#define CASET 0x2A
+#define RASET 0x2B
+#define RAMWR 0x2C
+#define COLOR_MODE_16BIT 0x05
+#define MADCTL_DEFAULT 0xC8
+
 
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
 I2C_HandleTypeDef hi2c1;
+
+SPI_HandleTypeDef hspi1;
 
 TIM_HandleTypeDef htim4;
 
@@ -63,6 +91,9 @@ TIM_HandleTypeDef htim4;
 
 uint16_t Distance = 0;  // cm
 uint16_t Ultrasonic_ReadDistanceCm(void);
+uint16_t cursor_x = 0;
+uint16_t cursor_y = 0;
+
 char buffer[16];
 
 /* USER CODE END PV */
@@ -72,15 +103,19 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_I2C1_Init(void);
 static void MX_TIM4_Init(void);
+static void MX_SPI1_Init(void);
 /* USER CODE BEGIN PFP */
 
-void LCD_WriteNibble(uint8_t nibble, uint8_t rs);
-void LCD_SendCommand(uint8_t command);
-void LCD_SendData(uint8_t data);
-void LCD_Init(void);
-void LCD_SetCursor(uint8_t row, uint8_t column);
-void LCD_Print(const char *text);
-void LCD_Clear(void);
+void ST7735_WriteData(uint8_t data[], uint16_t size);
+void ST7735_WriteCommand(uint8_t cmd);
+void ST7735_Init(void);
+void ST7735_DrawPixel(uint8_t x, uint8_t y, uint16_t color);
+void ST7735_DrawScreen(uint16_t frame[NUMROWS][NUMCOLS]);
+void ST7735_UpdateCharCursor(uint16_t x, uint16_t y);
+void ST7735_PrintChar(char character);
+void ST7735_PrintString(const char *string);
+void ST7735_SetAddressWindow(uint16_t xStart, uint16_t yStart, uint16_t xEnd, uint16_t yEnd);
+void ST7735_FillScreen(uint16_t color);
 
 /* USER CODE END PFP */
 
@@ -120,16 +155,20 @@ int main(void)
   MX_GPIO_Init();
   MX_I2C1_Init();
   MX_TIM4_Init();
+  MX_SPI1_Init();
   /* USER CODE BEGIN 2 */
 
+  ST7735_Init();
+  ST7735_FillScreen(WHITE);
+
   HAL_TIM_Base_Start(&htim4);
+
 
   HAL_GPIO_WritePin(TRIG_PORT,
                     TRIG_PIN,
                     GPIO_PIN_RESET);
 
-  LCD_Init();
-  LCD_Clear();
+
 
 //	HAL_TIM_Base_Start(&htim4);
 //	HAL_GPIO_WritePin(TRIG_PORT, TRIG_PIN, GPIO_PIN_RESET); // pull the TRIG pin low
@@ -144,24 +183,51 @@ int main(void)
 
 	  Distance = Ultrasonic_ReadDistanceCm();
 
-	     LCD_SetCursor(0, 0);
-	     LCD_Print("                ");
+	     ST7735_UpdateCharCursor(0, 0);
+	     ST7735_PrintString("Distance:");
 
-	     LCD_SetCursor(0, 0);
+	     ST7735_UpdateCharCursor(0, 16);
+	     ST7735_PrintString("                ");
+
+	     ST7735_UpdateCharCursor(0, 16);
 
 	     if (Distance == 0)
 	     {
-	         LCD_Print("No echo");
+	         ST7735_PrintString("------");
 	     }
 	     else
 	     {
 	         snprintf(buffer,
 	                  sizeof(buffer),
 	                  "%u cm",
-	                  Distance);
+	                  (unsigned int)Distance);
 
-	         LCD_Print(buffer);
+	         ST7735_PrintString(buffer);
 	     }
+
+	     HAL_Delay(100);
+
+
+//	  Distance = Ultrasonic_ReadDistanceCm();
+//
+//	     LCD_SetCursor(0, 0);
+//	     LCD_Print("                ");
+//
+//	     LCD_SetCursor(0, 0);
+//
+//	     if (Distance == 0)
+//	     {
+//	         LCD_Print("No echo");
+//	     }
+//	     else
+//	     {
+//	         snprintf(buffer,
+//	                  sizeof(buffer),
+//	                  "%u cm",
+//	                  Distance);
+//
+//	         LCD_Print(buffer);
+//	     }
 
 	     HAL_Delay(100);
 
@@ -270,6 +336,46 @@ static void MX_I2C1_Init(void)
 }
 
 /**
+  * @brief SPI1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_SPI1_Init(void)
+{
+
+  /* USER CODE BEGIN SPI1_Init 0 */
+
+  /* USER CODE END SPI1_Init 0 */
+
+  /* USER CODE BEGIN SPI1_Init 1 */
+
+  /* USER CODE END SPI1_Init 1 */
+  /* SPI1 parameter configuration*/
+  hspi1.Instance = SPI1;
+  hspi1.Init.Mode = SPI_MODE_MASTER;
+  hspi1.Init.Direction = SPI_DIRECTION_2LINES;
+  hspi1.Init.DataSize = SPI_DATASIZE_8BIT;
+  hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
+  hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
+  hspi1.Init.NSS = SPI_NSS_SOFT;
+  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_4;
+  hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
+  hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
+  hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
+  hspi1.Init.CRCPolynomial = 7;
+  hspi1.Init.CRCLength = SPI_CRC_LENGTH_DATASIZE;
+  hspi1.Init.NSSPMode = SPI_NSS_PULSE_ENABLE;
+  if (HAL_SPI_Init(&hspi1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN SPI1_Init 2 */
+
+  /* USER CODE END SPI1_Init 2 */
+
+}
+
+/**
   * @brief TIM4 Initialization Function
   * @param None
   * @retval None
@@ -331,14 +437,17 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(US_TRIG_GPIO_Port, US_TRIG_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOA, RES_Pin|CS_Pin, GPIO_PIN_SET);
 
-  /*Configure GPIO pin : US_TRIG_Pin */
-  GPIO_InitStruct.Pin = US_TRIG_Pin;
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOA, DC_Pin|US_TRIG_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pins : RES_Pin DC_Pin CS_Pin US_TRIG_Pin */
+  GPIO_InitStruct.Pin = RES_Pin|DC_Pin|CS_Pin|US_TRIG_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(US_TRIG_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   /*Configure GPIO pin : US_ECHO_Pin */
   GPIO_InitStruct.Pin = US_ECHO_Pin;
@@ -352,6 +461,241 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+
+void ST7735_WriteData(uint8_t data[], uint16_t size)
+{
+    HAL_GPIO_WritePin(DC_GPIO_Port,
+                      DC_Pin,
+                      GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(CS_GPIO_Port,
+                      CS_Pin,
+                      GPIO_PIN_RESET);
+
+    HAL_SPI_Transmit(&hspi1,
+                     data,
+                     size,
+                     HAL_MAX_DELAY);
+
+    HAL_GPIO_WritePin(CS_GPIO_Port,
+                      CS_Pin,
+                      GPIO_PIN_SET);
+}
+
+void ST7735_WriteCommand(uint8_t cmd)
+{
+    HAL_GPIO_WritePin(DC_GPIO_Port,
+                      DC_Pin,
+                      GPIO_PIN_RESET);
+
+    HAL_GPIO_WritePin(CS_GPIO_Port,
+                      CS_Pin,
+                      GPIO_PIN_RESET);
+
+    HAL_SPI_Transmit(&hspi1,
+                     &cmd,
+                     1,
+                     HAL_MAX_DELAY);
+
+    HAL_GPIO_WritePin(CS_GPIO_Port,
+                      CS_Pin,
+                      GPIO_PIN_SET);
+}
+
+void ST7735_Init(void)
+{
+    uint8_t data;
+
+    HAL_GPIO_WritePin(CS_GPIO_Port,
+                      CS_Pin,
+                      GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(RES_GPIO_Port,
+                      RES_Pin,
+                      GPIO_PIN_RESET);
+
+    HAL_Delay(5);
+
+    HAL_GPIO_WritePin(RES_GPIO_Port,
+                      RES_Pin,
+                      GPIO_PIN_SET);
+
+    HAL_Delay(5);
+
+    ST7735_WriteCommand(SWRESET);
+    HAL_Delay(150);
+
+    ST7735_WriteCommand(SLPOUT);
+    HAL_Delay(150);
+
+    ST7735_WriteCommand(COLMOD);
+
+    data = COLOR_MODE_16BIT;
+    ST7735_WriteData(&data, 1);
+
+    ST7735_WriteCommand(MADCTL);
+
+    data = MADCTL_DEFAULT;
+    ST7735_WriteData(&data, 1);
+
+    ST7735_WriteCommand(DISPON);
+    HAL_Delay(10);
+}
+
+void ST7735_SetAddressWindow(uint16_t xStart,
+                             uint16_t yStart,
+                             uint16_t xEnd,
+                             uint16_t yEnd)
+{
+    uint8_t address[4];
+
+    if (xStart > xEnd ||
+        yStart > yEnd ||
+        xEnd >= NUMCOLS ||
+        yEnd >= NUMROWS)
+    {
+        return;
+    }
+
+    ST7735_WriteCommand(CASET);
+
+    address[0] = xStart >> 8;
+    address[1] = xStart & 0xFF;
+    address[2] = xEnd >> 8;
+    address[3] = xEnd & 0xFF;
+
+    ST7735_WriteData(address, 4);
+
+    ST7735_WriteCommand(RASET);
+
+    address[0] = yStart >> 8;
+    address[1] = yStart & 0xFF;
+    address[2] = yEnd >> 8;
+    address[3] = yEnd & 0xFF;
+
+    ST7735_WriteData(address, 4);
+
+    ST7735_WriteCommand(RAMWR);
+}
+
+void ST7735_DrawPixel(uint8_t x,
+                      uint8_t y,
+                      uint16_t color)
+{
+    uint8_t pixelData[2];
+
+    if (x >= NUMCOLS || y >= NUMROWS)
+    {
+        return;
+    }
+
+    ST7735_SetAddressWindow(x, y, x, y);
+
+    pixelData[0] = color >> 8;
+    pixelData[1] = color & 0xFF;
+
+    ST7735_WriteData(pixelData, 2);
+}
+
+void ST7735_FillScreen(uint16_t color)
+{
+    uint8_t row_data[NUMCOLS * 2];
+
+    for (uint16_t x = 0; x < NUMCOLS; x++)
+    {
+        row_data[2 * x]     = color >> 8;
+        row_data[2 * x + 1] = color & 0xFF;
+    }
+
+    ST7735_SetAddressWindow(0, 0, NUMCOLS - 1, NUMROWS - 1);
+
+    HAL_GPIO_WritePin(DC_GPIO_Port, DC_Pin, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(CS_GPIO_Port, CS_Pin, GPIO_PIN_RESET);
+
+    for (uint16_t y = 0; y < NUMROWS; y++)
+    {
+        HAL_SPI_Transmit(&hspi1,
+                         row_data,
+                         sizeof(row_data),
+                         HAL_MAX_DELAY);
+    }
+
+    HAL_GPIO_WritePin(CS_GPIO_Port, CS_Pin, GPIO_PIN_SET);
+}
+
+void ST7735_UpdateCharCursor(uint16_t x,
+                             uint16_t y)
+{
+    cursor_x = x;
+    cursor_y = y;
+
+    if (cursor_x > NUMCOLS - 8)
+    {
+        cursor_x = 0;
+        cursor_y += 8;
+    }
+
+    if (cursor_y > NUMROWS - 9)
+    {
+        cursor_x = 0;
+        cursor_y = 0;
+    }
+}
+
+void ST7735_PrintChar(char character)
+{
+    if (character < ' ' || character > '~')
+    {
+        return;
+    }
+
+    int font_index = character - 0x20;
+    const uint8_t *character_data = fontTable[font_index];
+
+    uint8_t pixel_data[8 * 8 * 2];
+    uint16_t index = 0;
+
+    for (int row = 0; row < 8; row++)
+    {
+        uint8_t row_data = character_data[row];
+
+        for (int col = 7; col >= 0; col--)
+        {
+            uint16_t color;
+
+            if (row_data & (1 << col))
+            {
+                color = BLACK;
+            }
+            else
+            {
+                color = WHITE;
+            }
+
+            pixel_data[index++] = color >> 8;
+            pixel_data[index++] = color & 0xFF;
+        }
+    }
+
+    ST7735_SetAddressWindow(cursor_x,
+                            cursor_y,
+                            cursor_x + 7,
+                            cursor_y + 7);
+
+    ST7735_WriteData(pixel_data, sizeof(pixel_data));
+
+    ST7735_UpdateCharCursor(cursor_x + 8, cursor_y);
+}
+
+void ST7735_PrintString(const char *string)
+{
+    while (*string != '\0')
+    {
+        ST7735_PrintChar(*string);
+        string++;
+    }
+}
+
 
 uint16_t Ultrasonic_ReadDistanceCm(void)
 {
@@ -420,100 +764,100 @@ uint16_t Ultrasonic_ReadDistanceCm(void)
      */
     return (uint16_t)((echo_time + 29) / 58);
 }
-
-
-void LCD_WriteNibble(uint8_t nibble, uint8_t rs)
-{
-    uint8_t data;
-
-    data = (nibble & 0x0F) << LCD_D4_BIT;
-    data |= (rs & 0x01) << LCD_RS_BIT;
-    data |= 1 << LCD_BL_BIT;
-    data |= 1 << LCD_EN_BIT;
-
-    HAL_I2C_Master_Transmit(&hi2c1,
-                            I2C_ADDR << 1,
-                            &data,
-                            1,
-                            100);
-
-    HAL_Delay(1);
-
-    data &= ~(1 << LCD_EN_BIT);
-
-    HAL_I2C_Master_Transmit(&hi2c1,
-                            I2C_ADDR << 1,
-                            &data,
-                            1,
-                            100);
-}
-
-void LCD_SendCommand(uint8_t command)
-{
-    LCD_WriteNibble(command >> 4, 0);
-    LCD_WriteNibble(command & 0x0F, 0);
-
-    if (command == 0x01 || command == 0x02)
-    {
-        HAL_Delay(2);
-    }
-}
-
-void LCD_SendData(uint8_t data)
-{
-    LCD_WriteNibble(data >> 4, 1);
-    LCD_WriteNibble(data & 0x0F, 1);
-}
-
-void LCD_Init(void)
-{
-    HAL_Delay(50);
-
-    LCD_WriteNibble(0x03, 0);
-    HAL_Delay(5);
-
-    LCD_WriteNibble(0x03, 0);
-    HAL_Delay(1);
-
-    LCD_WriteNibble(0x03, 0);
-    HAL_Delay(1);
-
-    LCD_WriteNibble(0x02, 0);
-
-    LCD_SendCommand(0x28);
-    LCD_SendCommand(0x0C);
-    LCD_SendCommand(0x06);
-    LCD_SendCommand(0x01);
-
-    HAL_Delay(2);
-}
-
-void LCD_SetCursor(uint8_t row, uint8_t column)
-{
-    uint8_t address;
-
-    if (row == 0)
-        address = 0x00;
-    else
-        address = 0x40;
-
-    LCD_SendCommand(0x80 | (address + column));
-}
-
-void LCD_Print(const char *text)
-{
-    while (*text != '\0')
-    {
-        LCD_SendData(*text);
-        text++;
-    }
-}
-
-void LCD_Clear(void)
-{
-    LCD_SendCommand(0x01);
-    HAL_Delay(2);
-}
+//
+//
+//void LCD_WriteNibble(uint8_t nibble, uint8_t rs)
+//{
+//    uint8_t data;
+//
+//    data = (nibble & 0x0F) << LCD_D4_BIT;
+//    data |= (rs & 0x01) << LCD_RS_BIT;
+//    data |= 1 << LCD_BL_BIT;
+//    data |= 1 << LCD_EN_BIT;
+//
+//    HAL_I2C_Master_Transmit(&hi2c1,
+//                            I2C_ADDR << 1,
+//                            &data,
+//                            1,
+//                            100);
+//
+//    HAL_Delay(1);
+//
+//    data &= ~(1 << LCD_EN_BIT);
+//
+//    HAL_I2C_Master_Transmit(&hi2c1,
+//                            I2C_ADDR << 1,
+//                            &data,
+//                            1,
+//                            100);
+//}
+//
+//void LCD_SendCommand(uint8_t command)
+//{
+//    LCD_WriteNibble(command >> 4, 0);
+//    LCD_WriteNibble(command & 0x0F, 0);
+//
+//    if (command == 0x01 || command == 0x02)
+//    {
+//        HAL_Delay(2);
+//    }
+//}
+//
+//void LCD_SendData(uint8_t data)
+//{
+//    LCD_WriteNibble(data >> 4, 1);
+//    LCD_WriteNibble(data & 0x0F, 1);
+//}
+//
+//void LCD_Init(void)
+//{
+//    HAL_Delay(50);
+//
+//    LCD_WriteNibble(0x03, 0);
+//    HAL_Delay(5);
+//
+//    LCD_WriteNibble(0x03, 0);
+//    HAL_Delay(1);
+//
+//    LCD_WriteNibble(0x03, 0);
+//    HAL_Delay(1);
+//
+//    LCD_WriteNibble(0x02, 0);
+//
+//    LCD_SendCommand(0x28);
+//    LCD_SendCommand(0x0C);
+//    LCD_SendCommand(0x06);
+//    LCD_SendCommand(0x01);
+//
+//    HAL_Delay(2);
+//}
+//
+//void LCD_SetCursor(uint8_t row, uint8_t column)
+//{
+//    uint8_t address;
+//
+//    if (row == 0)
+//        address = 0x00;
+//    else
+//        address = 0x40;
+//
+//    LCD_SendCommand(0x80 | (address + column));
+//}
+//
+//void LCD_Print(const char *text)
+//{
+//    while (*text != '\0')
+//    {
+//        LCD_SendData(*text);
+//        text++;
+//    }
+//}
+//
+//void LCD_Clear(void)
+//{
+//    LCD_SendCommand(0x01);
+//    HAL_Delay(2);
+//}
 
 /* USER CODE END 4 */
 
