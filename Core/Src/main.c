@@ -95,6 +95,12 @@ uint16_t Ultrasonic_ReadDistanceCm(void);
 uint16_t cursor_x = 0;
 uint16_t cursor_y = 0;
 
+volatile uint8_t record_request = 0;
+
+uint16_t recorded_distance = 0;
+
+char record_buffer[16];
+
 char buffer[16];
 
 /* USER CODE END PV */
@@ -239,7 +245,46 @@ int main(void)
 	                              65,
 	                              2);
 
+	     if (record_request == 1)
+	     {
+	         record_request = 0;
+
+	         recorded_distance = Distance;
+
+	         if (recorded_distance == 0)
+	         {
+	             snprintf(record_buffer,
+	                      sizeof(record_buffer),
+	                      "--- cm");
+	         }
+	         else
+	         {
+	             snprintf(record_buffer,
+	                      sizeof(record_buffer),
+	                      "%3u cm",
+	                      (unsigned int)recorded_distance);
+	         }
+
+	         /*
+	          * Clear the saved-measurement area.
+	          */
+	         ST7735_PrintStringScaled("      ",
+	                                  16,
+	                                  125,
+	                                  2);
+
+	         /*
+	          * Display the saved measurement.
+	          */
+	         ST7735_PrintStringScaled(record_buffer,
+	                                  16,
+	                                  125,
+	                                  2);
+	     }
+
 	     HAL_Delay(100);
+
+
 
 
 //	  Distance = Ultrasonic_ReadDistanceCm();
@@ -483,11 +528,21 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
+  /*Configure GPIO pin : RECORD_BTN_Pin */
+  GPIO_InitStruct.Pin = RECORD_BTN_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(RECORD_BTN_GPIO_Port, &GPIO_InitStruct);
+
   /*Configure GPIO pin : US_ECHO_Pin */
   GPIO_InitStruct.Pin = US_ECHO_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(US_ECHO_GPIO_Port, &GPIO_InitStruct);
+
+  /* EXTI interrupt init*/
+  HAL_NVIC_SetPriority(EXTI0_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(EXTI0_IRQn);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
@@ -925,6 +980,24 @@ uint16_t Ultrasonic_ReadDistanceCm(void)
      * Distance in centimeters = echo time / 58.
      */
     return (uint16_t)((echo_time + 29) / 58);
+}
+
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+    static uint32_t last_button_tick = 0;
+    uint32_t current_tick = HAL_GetTick();
+
+    if (GPIO_Pin == RECORD_BTN_Pin)
+    {
+        /*
+         * Ignore button bounce for 200 ms.
+         */
+        if ((current_tick - last_button_tick) >= 200)
+        {
+            record_request = 1;
+            last_button_tick = current_tick;
+        }
+    }
 }
 //
 //

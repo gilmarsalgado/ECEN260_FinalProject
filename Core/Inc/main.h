@@ -63,6 +63,9 @@ void Error_Handler(void);
 #define DC_GPIO_Port GPIOA
 #define CS_Pin GPIO_PIN_4
 #define CS_GPIO_Port GPIOA
+#define RECORD_BTN_Pin GPIO_PIN_0
+#define RECORD_BTN_GPIO_Port GPIOB
+#define RECORD_BTN_EXTI_IRQn EXTI0_IRQn
 #define US_TRIG_Pin GPIO_PIN_8
 #define US_TRIG_GPIO_Port GPIOA
 #define US_ECHO_Pin GPIO_PIN_9
