@@ -24,6 +24,7 @@
 
 #include <stdio.h>
 #include "font.h"
+#include <string.h>
 
 /* USER CODE END Includes */
 
@@ -117,6 +118,9 @@ void ST7735_PrintString(const char *string);
 void ST7735_SetAddressWindow(uint16_t xStart, uint16_t yStart, uint16_t xEnd, uint16_t yEnd);
 void ST7735_FillScreen(uint16_t color);
 
+void ST7735_DrawCharScaled(char character, uint16_t x, uint16_t y, uint8_t scale);
+void ST7735_PrintStringScaled(const char *string, uint16_t x, uint16_t y, uint8_t scale);
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -159,7 +163,12 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
   ST7735_Init();
-  ST7735_FillScreen(WHITE);
+  ST7735_FillScreen(BLACK);
+
+  for (uint16_t x = 0; x < NUMCOLS; x++)
+  {
+      ST7735_DrawPixel((uint8_t)x, 106, WHITE);
+  }
 
   HAL_TIM_Base_Start(&htim4);
 
@@ -183,27 +192,52 @@ int main(void)
 
 	  Distance = Ultrasonic_ReadDistanceCm();
 
-	     ST7735_UpdateCharCursor(0, 0);
-	     ST7735_PrintString("Distance:");
-
-	     ST7735_UpdateCharCursor(0, 16);
-	     ST7735_PrintString("                ");
-
-	     ST7735_UpdateCharCursor(0, 16);
+	     /*
+	      * Clear the entire large-number area.
+	      * Four characters at 4× scale fill the 128-pixel width.
+	      */
+	     ST7735_PrintStringScaled("    ",
+	                              0,
+	                              25,
+	                              4);
 
 	     if (Distance == 0)
 	     {
-	         ST7735_PrintString("------");
+	         snprintf(buffer,
+	                  sizeof(buffer),
+	                  "---");
 	     }
 	     else
 	     {
 	         snprintf(buffer,
 	                  sizeof(buffer),
-	                  "%u cm",
+	                  "%u",
 	                  (unsigned int)Distance);
-
-	         ST7735_PrintString(buffer);
 	     }
+
+	     /*
+	      * Center the number.
+	      * Each 4× character is 32 pixels wide.
+	      */
+	     uint16_t number_width =
+	         strlen(buffer) * 32;
+
+	     uint16_t number_x =
+	         (NUMCOLS - number_width) / 2;
+
+	     ST7735_PrintStringScaled(buffer,
+	                              number_x,
+	                              25,
+	                              4);
+
+	     /*
+	      * Display the unit below the large number.
+	      * "cm" at 2× scale is 32 pixels wide.
+	      */
+	     ST7735_PrintStringScaled("cm",
+	                              48,
+	                              65,
+	                              2);
 
 	     HAL_Delay(100);
 
@@ -665,11 +699,11 @@ void ST7735_PrintChar(char character)
 
             if (row_data & (1 << col))
             {
-                color = BLACK;
+                color = WHITE;
             }
             else
             {
-                color = WHITE;
+                color = BLACK;
             }
 
             pixel_data[index++] = color >> 8;
@@ -692,6 +726,129 @@ void ST7735_PrintString(const char *string)
     while (*string != '\0')
     {
         ST7735_PrintChar(*string);
+        string++;
+    }
+}
+
+void ST7735_DrawCharScaled(char character,
+                           uint16_t x,
+                           uint16_t y,
+                           uint8_t scale)
+{
+    if (character < ' ' || character > '~')
+    {
+        return;
+    }
+
+    if (scale == 0)
+    {
+        return;
+    }
+
+    if (scale > 4)
+    {
+        scale = 4;
+    }
+
+    uint16_t width = 8 * scale;
+    uint16_t height = 8 * scale;
+
+    if ((x + width > NUMCOLS) ||
+        (y + height > NUMROWS))
+    {
+        return;
+    }
+
+    const uint8_t *character_data =
+        fontTable[character - 0x20];
+
+    /*
+     * Maximum row size:
+     * 8 source pixels × 4 scale × 2 color bytes
+     */
+    uint8_t row_buffer[8 * 4 * 2];
+
+    ST7735_SetAddressWindow(x,
+                            y,
+                            x + width - 1,
+                            y + height - 1);
+
+    /*
+     * Keep CS low while sending the entire character.
+     */
+    HAL_GPIO_WritePin(DC_GPIO_Port,
+                      DC_Pin,
+                      GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(CS_GPIO_Port,
+                      CS_Pin,
+                      GPIO_PIN_RESET);
+
+    for (int row = 0; row < 8; row++)
+    {
+        uint8_t source_row = character_data[row];
+
+        for (int repeat_y = 0; repeat_y < scale; repeat_y++)
+        {
+            uint16_t index = 0;
+
+            for (int col = 7; col >= 0; col--)
+            {
+                uint16_t color;
+
+                if (source_row & (1U << col))
+                {
+                    color = WHITE;
+                }
+                else
+                {
+                    color = BLACK;
+                }
+
+                for (int repeat_x = 0; repeat_x < scale; repeat_x++)
+                {
+                    row_buffer[index++] = color >> 8;
+                    row_buffer[index++] = color & 0xFF;
+                }
+            }
+
+            HAL_SPI_Transmit(&hspi1,
+                             row_buffer,
+                             index,
+                             HAL_MAX_DELAY);
+        }
+    }
+
+    HAL_GPIO_WritePin(CS_GPIO_Port,
+                      CS_Pin,
+                      GPIO_PIN_SET);
+}
+
+
+void ST7735_PrintStringScaled(const char *string,
+                              uint16_t x,
+                              uint16_t y,
+                              uint8_t scale)
+{
+    if (scale == 0)
+    {
+        return;
+    }
+
+    if (scale > 4)
+    {
+        scale = 4;
+    }
+
+    while ((*string != '\0') &&
+           (x + (8 * scale) <= NUMCOLS))
+    {
+        ST7735_DrawCharScaled(*string,
+                              x,
+                              y,
+                              scale);
+
+        x += 8 * scale;
         string++;
     }
 }
