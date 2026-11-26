@@ -591,6 +591,11 @@ void ST7735_SetAddressWindow(uint16_t xStart,
         return;
     }
 
+    xStart += 2;
+    xEnd   += 2;
+    yStart += 1;
+    yEnd   += 1;
+
     ST7735_WriteCommand(CASET);
 
     address[0] = xStart >> 8;
